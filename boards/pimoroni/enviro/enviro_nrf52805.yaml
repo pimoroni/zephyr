@@ -1,0 +1,15 @@
+identifier: pimoroni/enviro
+name: pimoroni-enviro
+type: mcu
+arch: arm
+ram: 24
+flash: 192
+toolchain:
+  - zephyr
+  - gnuarmemb
+  - xtools
+supported:
+  - counter
+  - gpio
+  - i2c
+vendor: pimoroni

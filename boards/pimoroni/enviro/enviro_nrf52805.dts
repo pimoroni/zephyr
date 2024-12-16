@@ -1,0 +1,129 @@
+/*
+ * Copyright (c) 2020 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+#include <nordic/nrf52805_caaa.dtsi>
+#include "enviro_nrf52805-pinctrl.dtsi"
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+	model = "Pimoroni Enviro";
+	compatible = "pimoroni,pimoroni-enviro";
+
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,uart-mcumgr = &uart0;
+		zephyr,bt-mon-uart = &uart0;
+		zephyr,bt-c2h-uart = &uart0;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		ledR: led_R {
+			gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+			label = "LED R";
+		};
+		ledG: led_G {
+			gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+			label = "LED G";
+		};
+		ledB: led_B {
+			gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+			label = "LED B";
+		};
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		button0: button_0 {
+			label = "Push button switch 0";
+			gpios = <&gpio0 18 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			zephyr,code = <INPUT_KEY_0>;
+		};
+	};
+
+	/* These aliases are provided for compatibility with samples */
+	aliases {
+		led0 = &ledR;
+		led1 = &ledG;
+		led2 = &ledB;
+		sw0 = &button0;
+		bootloader-led0 = &ledR;
+		mcuboot-button0 = &button0;
+		mcuboot-led0 = &ledG;
+		watchdog0 = &wdt0;
+	};
+};
+
+&reg {
+	regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+};
+
+&adc {
+	status = "okay";
+};
+
+&uicr {
+	gpio-as-nreset;
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpiote {
+	status = "okay";
+};
+
+&i2c0 {
+	compatible = "nordic,nrf-twi";
+	status = "okay";
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-1 = <&i2c0_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&spi0 {
+	status = "disabled";
+};
+
+&uart0 {
+	compatible = "nordic,nrf-uarte";
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-1 = <&uart0_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0xc000>;
+		};
+		slot0_partition: partition@c000 {
+			label = "image-0";
+			reg = <0x0000C000 0xe000>;
+		};
+		slot1_partition: partition@1a000 {
+			label = "image-1";
+			reg = <0x0001a000 0xe000>;
+		};
+		storage_partition: partition@28000 {
+			label = "storage";
+			reg = <0x00028000 0x00008000>;
+		};
+	};
+};

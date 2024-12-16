@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Enable MPU
+CONFIG_ARM_MPU=y
+
+# Enable hardware stack protection
+CONFIG_HW_STACK_PROTECTION=y
+
+# Enable GPIO
+CONFIG_GPIO=y
+
+# Enable UART driver
+CONFIG_SERIAL=n
+
+# Enable console
+CONFIG_CONSOLE=n
+CONFIG_UART_CONSOLE=n
+
+# Enable power management
+CONFIG_PM_DEVICE=y
+
+# Disable MCUBOOT
+CONFIG_BOOTLOADER_MCUBOOT=n
+
+# Use internal oscillator
+CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC=y
+
+# Bluetooth not enabled by default on nRF52805 due to RAM limitations when
+# running the default set of kernel tests.
