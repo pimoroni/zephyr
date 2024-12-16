@@ -16,8 +16,13 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/printk.h>
 
+/* size of stack area used by each thread */
+#define STACKSIZE 256
 
-#define LED_ON_TIME 100 // heartbeat LED on duration in milliseconds
+/* scheduling priority used by each thread */
+#define PRIORITY 7
+
+#define LED_ON_TIME 100 // heartbeat LED on duration in microseconds
 #define LED_FREQUENCY 5 // heartbeat LED frequency in seconds
 
 const struct device *const dev = DEVICE_DT_GET_ANY(bosch_bme280);
@@ -31,17 +36,22 @@ RTIO_DEFINE(ctx, 1, 1);
 
 
 #define LED0_NODE DT_ALIAS(led0)
-static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+static const struct gpio_dt_spec led_err = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 #define LED1_NODE DT_ALIAS(led1)
-static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
-
-struct gpio_dt_spec *current_led = &led1;
+static const struct gpio_dt_spec led_ok = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
 //#define LED1_NODE DT_ALIAS(led1)
 //static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
-bool led_state = true;
+
+typedef enum led_status {
+	HEARTBEAT,
+	ERROR,
+	FATAL
+} led_status;
+
+led_status led_current = HEARTBEAT;
 
 #define SERVICE_DATA_LEN        9
 #define SERVICE_UUID            0xfcd2      /* BTHome service UUID */
@@ -76,16 +86,6 @@ static struct bt_data ad[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 	BT_DATA(BT_DATA_SVC_DATA16, service_data, ARRAY_SIZE(service_data))
 };
-
-struct k_timer my_timer;
-
-static void timer_timeout(struct k_timer *timer_id)
-{
-	int ret = gpio_pin_set_dt(current_led, 0);
-	k_sleep(K_MSEC(LED_ON_TIME));
-	ret = gpio_pin_set_dt(current_led, 1);
-	(void)ret;
-}
 
 
 static const struct device *check_bme280_device(void)
@@ -124,56 +124,67 @@ static void bt_ready(int err)
 	}
 }
 
-void led_flash_fatal(void) {
-	current_led = &led0;
-	k_timer_stop(&my_timer);
-	gpio_pin_set_dt(&led1, 1);
-	k_timer_start(&my_timer, K_MSEC(100), K_MSEC(100));
-	while (1){
-		k_sleep(K_MSEC(BT_GAP_ADV_SLOW_INT_MIN));
-	};
+void status_led(void) {
+	int err;
+
+	if (!gpio_is_ready_dt(&led_ok) || !gpio_is_ready_dt(&led_err)) {
+		printk("LED: device not ready.\n");
+		return;
+	}
+
+	err = gpio_pin_configure_dt(&led_ok, GPIO_OUTPUT_ACTIVE);
+	err = gpio_pin_configure_dt(&led_err, GPIO_OUTPUT_ACTIVE);
+	if (err < 0) {
+		printk("LED: device failed.\n");
+		return;
+	}
+
+	while (1) {
+		switch (led_current) {
+			case HEARTBEAT:
+				err = gpio_pin_set_dt(&led_err, 1);
+				err = gpio_pin_set_dt(&led_ok, 0);
+				k_usleep(LED_ON_TIME);
+				err = gpio_pin_set_dt(&led_ok, 1);
+				k_sleep(K_SECONDS(LED_FREQUENCY));
+				break;
+			case ERROR:
+			case FATAL:
+				err = gpio_pin_set_dt(&led_ok, 1);
+				err = gpio_pin_set_dt(&led_err, 0);
+				k_usleep(LED_ON_TIME);
+				err = gpio_pin_set_dt(&led_err, 1);
+				k_sleep(K_MSEC(100));
+				break;
+		};
+	}
+}
+
+K_THREAD_DEFINE(status_led_id, STACKSIZE, status_led, NULL, NULL, NULL, PRIORITY, 0, 0);
+
+static void set_status_led(led_status s) {
+	if (led_current == s) return;
+	led_current = s;
+	k_wakeup(status_led_id);
+	if (s == FATAL) {
+		while(true) {
+			k_sleep(K_SECONDS(1));
+		}
+	}
 }
 
 int main(void)
 {
-	//const struct device *const counter_dev = DEVICE_DT_GET(TIMER);
 	int err;
-
-	/*if (!gpio_is_ready_dt(&led1)) {
-		printk("LED: device not ready.\n");
-		return 0;
-	}
-
-	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_ACTIVE);
-	if (err < 0) {
-		return 0;
-	}
-	gpio_pin_set_dt(&led1, 1);*/
-
-	if (!gpio_is_ready_dt(&led0) || !gpio_is_ready_dt(&led1)) {
-		printk("LED: device not ready.\n");
-		return 0;
-	}
-
-	err = gpio_pin_configure_dt(&led0, GPIO_OUTPUT_ACTIVE);
-	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_ACTIVE);
-	if (err < 0) {
-		printk("LED: device failed.\n");
-		return 0;
-	}
+	set_status_led(HEARTBEAT);
 
 	printk("Starting BTHome sensor template\n");
-	k_timer_init(&my_timer, timer_timeout, NULL);
-	k_timer_start(&my_timer, K_MSEC(10), K_MSEC(10));
 
 	const struct device *dev = check_bme280_device();
 
 	if (dev == NULL) {
-		led_flash_fatal();
+		set_status_led(FATAL);
 	}
-
-	k_timer_stop(&my_timer);
-	k_timer_start(&my_timer, K_SECONDS(LED_FREQUENCY), K_SECONDS(LED_FREQUENCY));
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(bt_ready);
@@ -197,7 +208,9 @@ int main(void)
 
 		if (rc != 0) {
 			printk("%s: sensor_read() failed: %d\n", dev->name, rc);
-			led_flash_fatal();
+			set_status_led(ERROR);
+		} else {
+			set_status_led(HEARTBEAT);
 		}
 
 		const struct sensor_decoder_api *decoder;
@@ -251,9 +264,9 @@ int main(void)
 		} else {
 			printk("Updated advertising data (temp %d.%d, %lld)\n", itemp, ftemp, temp);
 		}
-		//gpio_pin_toggle_dt(&led1);
-		//k_sleep(K_MSEC(BT_GAP_ADV_SLOW_INT_MIN));
-		k_sleep(K_MSEC(1600 * 30));
+	
+		k_sleep(K_MSEC(BT_GAP_ADV_SLOW_INT_MIN));
+		//k_sleep(K_MSEC(1600 * 30));
 	}
 	return 0;
 }
